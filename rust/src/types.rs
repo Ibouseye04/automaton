@@ -9,10 +9,11 @@ use std::fmt;
 // ---------------------------------------------------------------------------
 
 /// Runtime states the automaton transitions through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentState {
     /// First-run, not yet configured.
+    #[default]
     Uninitialized,
     /// Setup wizard running.
     Initializing,
@@ -45,11 +46,6 @@ impl fmt::Display for AgentState {
     }
 }
 
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::Uninitialized
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Survival tiers

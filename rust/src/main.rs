@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -97,12 +97,12 @@ async fn main() -> Result<()> {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-async fn cmd_setup(home_dir: &PathBuf) -> Result<()> {
+async fn cmd_setup(home_dir: &Path) -> Result<()> {
     automaton::setup::run_setup_wizard(home_dir)?;
     Ok(())
 }
 
-async fn cmd_run(home_dir: &PathBuf) -> Result<()> {
+async fn cmd_run(home_dir: &Path) -> Result<()> {
     let (config, wallet, db) = bootstrap(home_dir)?;
 
     let conway = ConwayClient::new(
@@ -129,7 +129,7 @@ async fn cmd_run(home_dir: &PathBuf) -> Result<()> {
     agent::run_agent_loop(config, db, conway, inference, skill_list, cancel).await
 }
 
-async fn cmd_status(home_dir: &PathBuf) -> Result<()> {
+async fn cmd_status(home_dir: &Path) -> Result<()> {
     let (config, wallet, db) = bootstrap(home_dir)?;
     let db = Arc::new(Mutex::new(db));
 
@@ -169,7 +169,7 @@ async fn cmd_status(home_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_provision(home_dir: &PathBuf) -> Result<()> {
+async fn cmd_provision(home_dir: &Path) -> Result<()> {
     let config_path = home_dir.join("automaton.toml");
     let mut cfg = config::load_config(&config_path)?;
     let wallet_path = home_dir.join("wallet.json");
@@ -188,7 +188,7 @@ async fn cmd_provision(home_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_daemon(home_dir: &PathBuf) -> Result<()> {
+async fn cmd_daemon(home_dir: &Path) -> Result<()> {
     let (config, _wallet, db) = bootstrap(home_dir)?;
 
     let conway = ConwayClient::new(
@@ -275,7 +275,7 @@ async fn cmd_daemon(home_dir: &PathBuf) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Bootstrap the runtime: load config, wallet, and database.
-fn bootstrap(home_dir: &PathBuf) -> Result<(config::AutomatonConfig, Wallet, Database)> {
+fn bootstrap(home_dir: &Path) -> Result<(config::AutomatonConfig, Wallet, Database)> {
     // Ensure home directory exists
     if !home_dir.exists() {
         std::fs::create_dir_all(home_dir).with_context(|| {

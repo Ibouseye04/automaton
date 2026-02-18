@@ -52,12 +52,10 @@ pub async fn spawn_child(
     // 3. Install runtime in the child sandbox
     // For now we exec commands in the parent to set up the child
     // (real implementation would use the child sandbox's exec endpoint)
-    let _install_script = format!(
-        r#"
+    let _install_script = r#"
         # Install automaton runtime in child sandbox
         curl -fsSL https://conway.tech/automaton.sh | sh
-        "#
-    );
+        "#.to_string();
     // Note: In production, this would target the child sandbox
     info!("Child runtime installation initiated");
 
