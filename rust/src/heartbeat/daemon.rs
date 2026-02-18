@@ -50,7 +50,9 @@ impl HeartbeatDaemon {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(tick_interval) => {
-                    self.tick().await;
+                    if let Err(e) = self.tick().await {
+                        error!("Heartbeat tick failed: {e}");
+                    }
                 }
                 _ = cancel.cancelled() => {
                     info!("Heartbeat daemon shutting down");
@@ -61,7 +63,10 @@ impl HeartbeatDaemon {
     }
 
     /// Process one tick — check each entry and run if due.
-    async fn tick(&mut self) {
+    ///
+    /// Individual task failures are logged and do not stop other tasks.
+    /// Infrastructure errors (e.g. DB write failure) are propagated.
+    async fn tick(&mut self) -> Result<()> {
         let now = Utc::now();
 
         for entry in &self.entries {
@@ -103,12 +108,11 @@ impl HeartbeatDaemon {
                         Err(e) => (format!("Error: {}", e), false),
                     };
 
-                    // Log to database
+                    // Log to database (propagate DB errors)
                     {
                         let db = self.db.lock().await;
-                        if let Err(e) = db.log_heartbeat(&entry.name, &result_str, success) {
-                            error!("Failed to log heartbeat: {}", e);
-                        }
+                        db.log_heartbeat(&entry.name, &result_str, success)
+                            .context("Failed to log heartbeat to database")?;
                     }
 
                     self.last_run.insert(entry.name.clone(), now);
@@ -119,6 +123,8 @@ impl HeartbeatDaemon {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
