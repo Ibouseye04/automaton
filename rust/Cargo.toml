@@ -1,0 +1,83 @@
+[package]
+name = "automaton"
+version = "0.1.0"
+edition = "2021"
+description = "Sovereign autonomous AI agent runtime — Rust rewrite for Pi"
+license = "MIT"
+default-run = "automaton"
+
+[[bin]]
+name = "automaton"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime (minimal features for Pi)
+tokio = { version = "1.42", default-features = false, features = [
+    "rt-multi-thread", "macros", "time", "net", "io-util",
+    "sync", "process", "fs", "signal",
+] }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+serde_yaml = "0.9"
+
+# HTTP client (rustls for easy cross-compilation to Pi)
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls", "json",
+] }
+
+# Database (bundled SQLite, no system dep)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Ethereum / wallet
+k256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+hex = "0.4"
+
+# Cron scheduling
+cron = "0.13"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Async traits
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Unique IDs
+ulid = "1.1"
+
+# Console UI
+colored = "2.0"
+
+# Crypto (for SIWE / signatures)
+sha3 = "0.10"
+
+# Directories
+directories = "5.0"
+
+# Shell expansion
+shellexpand = "3.1"
+
+
+[profile.release]
+opt-level = "z"       # Size optimization for Pi
+lto = true            # Link-time optimization
+codegen-units = 1     # Better optimization
+strip = true          # Remove debug symbols
+panic = "abort"       # Reduce panic overhead
+
+[profile.dev]
+opt-level = 0
