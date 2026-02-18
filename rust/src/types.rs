@@ -259,6 +259,19 @@ pub enum ModificationType {
     Upstream,
 }
 
+impl fmt::Display for ModificationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CodeEdit => write!(f, "code_edit"),
+            Self::ToolInstall => write!(f, "tool_install"),
+            Self::ConfigUpdate => write!(f, "config_update"),
+            Self::SkillAdd => write!(f, "skill_add"),
+            Self::HeartbeatUpdate => write!(f, "heartbeat_update"),
+            Self::Upstream => write!(f, "upstream"),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Replication
 // ---------------------------------------------------------------------------

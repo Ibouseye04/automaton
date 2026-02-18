@@ -71,6 +71,12 @@ directories = "5.0"
 # Shell expansion
 shellexpand = "3.1"
 
+# Diff generation for audit log
+similar = "2.6"
+
+# Graceful shutdown support
+tokio-util = { version = "0.7", features = ["rt"] }
+
 
 [profile.release]
 opt-level = "z"       # Size optimization for Pi
