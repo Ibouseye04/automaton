@@ -74,8 +74,8 @@ shellexpand = "3.1"
 # Diff generation for audit log
 similar = "2.6"
 
-# Graceful shutdown support
-tokio-util = { version = "0.7", features = ["rt"] }
+# Graceful shutdown support (CancellationToken lives in default `sync` feature)
+tokio-util = "0.7"
 
 
 [profile.release]

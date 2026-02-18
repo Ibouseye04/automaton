@@ -43,7 +43,7 @@ impl AuditLog {
         file_path: &str,
         diff: &str,
     ) -> Result<()> {
-        let truncated_diff = truncate_diff(diff.to_string());
+        let (truncated_diff, was_truncated) = truncate_diff(diff.to_string());
         let entry = ModificationEntry {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
@@ -51,6 +51,7 @@ impl AuditLog {
             description: description.to_string(),
             file_path: Some(file_path.to_string()),
             diff: Some(truncated_diff),
+            diff_truncated: was_truncated,
             reversible: true,
         };
 
@@ -67,6 +68,7 @@ impl AuditLog {
             description: format!("[{}] {}", tool_name, description),
             file_path: None,
             diff: None,
+            diff_truncated: false,
             reversible: true,
         };
 
@@ -76,7 +78,7 @@ impl AuditLog {
 
     /// Record a config update.
     pub async fn log_config_update(&self, description: &str, diff: &str) -> Result<()> {
-        let truncated_diff = truncate_diff(diff.to_string());
+        let (truncated_diff, was_truncated) = truncate_diff(diff.to_string());
         let entry = ModificationEntry {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
@@ -84,6 +86,7 @@ impl AuditLog {
             description: description.to_string(),
             file_path: Some("automaton.toml".to_string()),
             diff: Some(truncated_diff),
+            diff_truncated: was_truncated,
             reversible: true,
         };
 
@@ -100,6 +103,7 @@ impl AuditLog {
             description: format!("Added skill: {}", skill_name),
             file_path: Some(file_path.to_string()),
             diff: None,
+            diff_truncated: false,
             reversible: true,
         };
 
@@ -116,6 +120,7 @@ impl AuditLog {
             description: description.to_string(),
             file_path: Some("heartbeat.yml".to_string()),
             diff: None,
+            diff_truncated: false,
             reversible: true,
         };
 
@@ -130,7 +135,7 @@ impl AuditLog {
         description: &str,
         diff: &str,
     ) -> Result<()> {
-        let truncated_diff = truncate_diff(diff.to_string());
+        let (truncated_diff, was_truncated) = truncate_diff(diff.to_string());
         let entry = ModificationEntry {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
@@ -138,10 +143,48 @@ impl AuditLog {
             description: format!("Upstream pull {}: {}", commit_hash, description),
             file_path: None,
             diff: Some(truncated_diff),
+            diff_truncated: was_truncated,
             reversible: false,
         };
 
         info!("Audit: upstream pull {}", commit_hash);
         self.persist(entry).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_audit_log_concurrent_writes() {
+        let db = Database::open_memory().unwrap();
+        let db = Arc::new(Mutex::new(db));
+        let audit = Arc::new(AuditLog::new(db.clone()));
+
+        let mut handles = Vec::new();
+        for i in 0..20 {
+            let audit = audit.clone();
+            handles.push(tokio::spawn(async move {
+                audit
+                    .log_code_edit(
+                        &format!("edit {}", i),
+                        &format!("workspace/file_{}.rs", i),
+                        &format!("-old line {}\n+new line {}", i, i),
+                    )
+                    .await
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        // Verify all 20 entries were persisted
+        let db_lock = db.lock().await;
+        let count: u64 = db_lock
+            .count_modifications()
+            .expect("should count modifications");
+        assert_eq!(count, 20);
     }
 }

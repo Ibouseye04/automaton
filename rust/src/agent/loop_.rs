@@ -18,15 +18,19 @@ use anyhow::Result;
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 /// Run the main agent loop until shutdown.
+///
+/// The loop exits cooperatively when `cancel` is triggered.
 pub async fn run_agent_loop(
     config: AutomatonConfig,
     db: Arc<Mutex<Database>>,
     conway: ConwayClient,
     inference: InferenceClient,
     skills: Vec<Skill>,
+    cancel: CancellationToken,
 ) -> Result<()> {
     info!("Starting agent loop for '{}'", config.name);
 
@@ -42,6 +46,12 @@ pub async fn run_agent_loop(
     let mut conversation_history: Vec<ChatMessage> = Vec::new();
 
     loop {
+        // Check for cancellation at top of each iteration
+        if cancel.is_cancelled() {
+            info!("Agent loop received shutdown signal");
+            break;
+        }
+
         // Check if we should be sleeping
         {
             let db_lock = db.lock().await;
@@ -50,7 +60,13 @@ pub async fn run_agent_loop(
                     if Utc::now() < wake_time {
                         drop(db_lock);
                         info!("Sleeping until {}", sleep_until);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(tokio::time::Duration::from_secs(60)) => {}
+                            _ = cancel.cancelled() => {
+                                info!("Agent loop received shutdown signal during sleep");
+                                break;
+                            }
+                        }
                         continue;
                     }
                 }
@@ -81,13 +97,13 @@ pub async fn run_agent_loop(
         // Build system prompt
         let system_prompt = {
             let db_lock = db.lock().await;
-            system_prompt::build_system_prompt(&config, &*db_lock, survival_tier, &skills)
+            system_prompt::build_system_prompt(&config, &db_lock, survival_tier, &skills)
         };
 
         // Build turn context
         let turn_context = {
             let db_lock = db.lock().await;
-            context::build_turn_context(&*db_lock)
+            context::build_turn_context(&db_lock)
         };
 
         // Build messages
@@ -119,7 +135,10 @@ pub async fn run_agent_loop(
                     consecutive_errors = 0;
                 }
 
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {}
+                    _ = cancel.cancelled() => { break; }
+                }
                 continue;
             }
         };
@@ -191,11 +210,17 @@ pub async fn run_agent_loop(
         // If no tool calls and no content, the model might be idle — sleep briefly
         if response.tool_calls.is_empty() && response.content.is_none() {
             info!("No output from model — sleeping 30s");
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {}
+                _ = cancel.cancelled() => { break; }
+            }
         }
 
         // Brief pause between turns to avoid hammering the API
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {}
+            _ = cancel.cancelled() => { break; }
+        }
 
         // Trim conversation history to avoid unbounded growth
         if conversation_history.len() > 40 {

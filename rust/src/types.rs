@@ -245,6 +245,9 @@ pub struct ModificationEntry {
     pub description: String,
     pub file_path: Option<String>,
     pub diff: Option<String>,
+    /// Whether the stored diff was truncated (original exceeded 64KB).
+    #[serde(default)]
+    pub diff_truncated: bool,
     pub reversible: bool,
 }
 

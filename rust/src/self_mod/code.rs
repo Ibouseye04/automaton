@@ -67,9 +67,9 @@ pub fn validate_write_path(path: &str) -> Result<()> {
 
 /// Compute a unified diff between two strings.
 ///
-/// Returns the diff as a string. If the diff exceeds `MAX_DIFF_BYTES`,
+/// Returns `(diff_text, was_truncated)`. If the diff exceeds `MAX_DIFF_BYTES`,
 /// it is truncated and a marker is appended.
-pub fn compute_diff(old: &str, new: &str, file_path: &str) -> String {
+pub fn compute_diff(old: &str, new: &str, file_path: &str) -> (String, bool) {
     let diff = TextDiff::from_lines(old, new);
 
     let mut output = String::new();
@@ -83,13 +83,15 @@ pub fn compute_diff(old: &str, new: &str, file_path: &str) -> String {
 }
 
 /// Truncate a diff string to `MAX_DIFF_BYTES`, appending a truncation marker.
-pub fn truncate_diff(diff: String) -> String {
+///
+/// Returns `(possibly_truncated_diff, was_truncated)`.
+pub fn truncate_diff(diff: String) -> (String, bool) {
     if diff.len() > MAX_DIFF_BYTES {
         let mut truncated = diff[..MAX_DIFF_BYTES].to_string();
         truncated.push_str("\n... [diff truncated, exceeded 64KB limit]\n");
-        truncated
+        (truncated, true)
     } else {
-        diff
+        (diff, false)
     }
 }
 
@@ -111,7 +113,7 @@ pub async fn edit_file(conway: &ConwayClient, path: &str, content: &str) -> Resu
     conway.write_file(path, content).await?;
 
     // Compute unified diff
-    let diff = compute_diff(&old_content, content, path);
+    let (diff, _truncated) = compute_diff(&old_content, content, path);
 
     let old_lines = old_content.lines().count();
     let new_lines = content.lines().count();
@@ -188,7 +190,8 @@ mod tests {
     fn test_compute_diff_basic() {
         let old = "line1\nline2\nline3\n";
         let new = "line1\nmodified\nline3\n";
-        let diff = compute_diff(old, new, "test.txt");
+        let (diff, truncated) = compute_diff(old, new, "test.txt");
+        assert!(!truncated);
         assert!(diff.contains("--- a/test.txt"));
         assert!(diff.contains("+++ b/test.txt"));
         assert!(diff.contains("-line2"));
@@ -198,7 +201,8 @@ mod tests {
     #[test]
     fn test_diff_truncation() {
         let large = "x".repeat(MAX_DIFF_BYTES + 1000);
-        let result = truncate_diff(large);
+        let (result, truncated) = truncate_diff(large);
+        assert!(truncated);
         assert!(result.len() <= MAX_DIFF_BYTES + 100);
         assert!(result.contains("[diff truncated, exceeded 64KB limit]"));
     }
@@ -206,7 +210,8 @@ mod tests {
     #[test]
     fn test_diff_no_truncation_when_small() {
         let small = "small diff content".to_string();
-        let result = truncate_diff(small.clone());
+        let (result, truncated) = truncate_diff(small.clone());
+        assert!(!truncated);
         assert_eq!(result, small);
     }
 }

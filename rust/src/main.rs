@@ -124,8 +124,9 @@ async fn cmd_run(home_dir: &PathBuf) -> Result<()> {
         wallet.address,
     );
 
-    // Run the agent loop
-    agent::run_agent_loop(config, db, conway, inference, skill_list).await
+    // Run the agent loop (no daemon, so use a no-op cancel token)
+    let cancel = CancellationToken::new();
+    agent::run_agent_loop(config, db, conway, inference, skill_list, cancel).await
 }
 
 async fn cmd_status(home_dir: &PathBuf) -> Result<()> {
@@ -208,22 +209,15 @@ async fn cmd_daemon(home_dir: &PathBuf) -> Result<()> {
     // Create a cancellation token for graceful shutdown
     let cancel = CancellationToken::new();
 
-    // Spawn heartbeat daemon
+    // Spawn heartbeat daemon (token is checked inside the loop)
     let heartbeat_db = db.clone();
     let heartbeat_config = config.clone();
     let heartbeat_cancel = cancel.clone();
     let heartbeat_handle = tokio::spawn(async move {
         match HeartbeatDaemon::new(heartbeat_config, heartbeat_db) {
             Ok(mut daemon) => {
-                tokio::select! {
-                    result = daemon.run() => {
-                        if let Err(e) = result {
-                            error!("Heartbeat daemon error: {}", e);
-                        }
-                    }
-                    _ = heartbeat_cancel.cancelled() => {
-                        info!("Heartbeat daemon received shutdown signal");
-                    }
+                if let Err(e) = daemon.run(heartbeat_cancel).await {
+                    error!("Heartbeat daemon error: {}", e);
                 }
             }
             Err(e) => {
@@ -232,20 +226,15 @@ async fn cmd_daemon(home_dir: &PathBuf) -> Result<()> {
         }
     });
 
-    // Spawn agent loop
+    // Spawn agent loop (token is checked inside the loop)
     let agent_db = db.clone();
     let agent_config = config.clone();
     let agent_cancel = cancel.clone();
     let agent_handle = tokio::spawn(async move {
-        tokio::select! {
-            result = agent::run_agent_loop(agent_config, agent_db, conway, inference, skill_list) => {
-                if let Err(e) = result {
-                    error!("Agent loop error: {}", e);
-                }
-            }
-            _ = agent_cancel.cancelled() => {
-                info!("Agent loop received shutdown signal");
-            }
+        if let Err(e) =
+            agent::run_agent_loop(agent_config, agent_db, conway, inference, skill_list, agent_cancel).await
+        {
+            error!("Agent loop error: {}", e);
         }
     });
 

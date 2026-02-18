@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Background heartbeat daemon.
@@ -39,14 +40,23 @@ impl HeartbeatDaemon {
     }
 
     /// Run the heartbeat loop (call from a tokio::spawn).
-    pub async fn run(&mut self) -> Result<()> {
+    ///
+    /// The loop exits cooperatively when `cancel` is triggered.
+    pub async fn run(&mut self, cancel: CancellationToken) -> Result<()> {
         info!("Heartbeat daemon started");
 
         let tick_interval = tokio::time::Duration::from_secs(60);
 
         loop {
-            tokio::time::sleep(tick_interval).await;
-            self.tick().await;
+            tokio::select! {
+                _ = tokio::time::sleep(tick_interval) => {
+                    self.tick().await;
+                }
+                _ = cancel.cancelled() => {
+                    info!("Heartbeat daemon shutting down");
+                    return Ok(());
+                }
+            }
         }
     }
 

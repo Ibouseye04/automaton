@@ -234,6 +234,14 @@ impl Database {
         Ok(())
     }
 
+    /// Count total modification entries.
+    pub fn count_modifications(&self) -> Result<u64> {
+        let count: u64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM modifications", [], |row| row.get(0))?;
+        Ok(count)
+    }
+
     // -----------------------------------------------------------------------
     // Children
     // -----------------------------------------------------------------------
