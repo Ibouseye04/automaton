@@ -9,10 +9,11 @@ use std::fmt;
 // ---------------------------------------------------------------------------
 
 /// Runtime states the automaton transitions through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentState {
     /// First-run, not yet configured.
+    #[default]
     Uninitialized,
     /// Setup wizard running.
     Initializing,
@@ -45,11 +46,6 @@ impl fmt::Display for AgentState {
     }
 }
 
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::Uninitialized
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Survival tiers
@@ -245,6 +241,9 @@ pub struct ModificationEntry {
     pub description: String,
     pub file_path: Option<String>,
     pub diff: Option<String>,
+    /// Whether the stored diff was truncated (original exceeded 64KB).
+    #[serde(default)]
+    pub diff_truncated: bool,
     pub reversible: bool,
 }
 
@@ -257,6 +256,19 @@ pub enum ModificationType {
     SkillAdd,
     HeartbeatUpdate,
     Upstream,
+}
+
+impl fmt::Display for ModificationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CodeEdit => write!(f, "code_edit"),
+            Self::ToolInstall => write!(f, "tool_install"),
+            Self::ConfigUpdate => write!(f, "config_update"),
+            Self::SkillAdd => write!(f, "skill_add"),
+            Self::HeartbeatUpdate => write!(f, "heartbeat_update"),
+            Self::Upstream => write!(f, "upstream"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

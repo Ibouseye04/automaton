@@ -223,7 +223,7 @@ impl Database {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 entry.id,
-                serde_json::to_string(&entry.mod_type)?,
+                entry.mod_type.to_string(),
                 entry.description,
                 entry.file_path,
                 entry.diff,
@@ -232,6 +232,14 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    /// Count total modification entries.
+    pub fn count_modifications(&self) -> Result<u64> {
+        let count: u64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM modifications", [], |row| row.get(0))?;
+        Ok(count)
     }
 
     // -----------------------------------------------------------------------

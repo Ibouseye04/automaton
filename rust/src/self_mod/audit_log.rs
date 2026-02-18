@@ -2,7 +2,11 @@
 //!
 //! Every code change, tool installation, config update, and skill addition
 //! is recorded. The creator can review the full audit trail.
+//!
+//! DB writes are offloaded via `spawn_blocking` so sqlite I/O does not
+//! block the async runtime.
 
+use crate::self_mod::code::truncate_diff;
 use crate::state::Database;
 use crate::types::{ModificationEntry, ModificationType};
 use anyhow::Result;
@@ -21,6 +25,17 @@ impl AuditLog {
         Self { db }
     }
 
+    /// Persist an entry via spawn_blocking to avoid blocking the async runtime.
+    async fn persist(&self, entry: ModificationEntry) -> Result<()> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.blocking_lock();
+            db.log_modification(&entry)
+        })
+        .await??;
+        Ok(())
+    }
+
     /// Record a code edit modification.
     pub async fn log_code_edit(
         &self,
@@ -28,19 +43,20 @@ impl AuditLog {
         file_path: &str,
         diff: &str,
     ) -> Result<()> {
+        let (truncated_diff, was_truncated) = truncate_diff(diff.to_string());
         let entry = ModificationEntry {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
             mod_type: ModificationType::CodeEdit,
             description: description.to_string(),
             file_path: Some(file_path.to_string()),
-            diff: Some(diff.to_string()),
+            diff: Some(truncated_diff),
+            diff_truncated: was_truncated,
             reversible: true,
         };
 
         info!("Audit: code edit to {}", file_path);
-        let db = self.db.lock().await;
-        db.log_modification(&entry)
+        self.persist(entry).await
     }
 
     /// Record a tool installation.
@@ -49,32 +65,33 @@ impl AuditLog {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
             mod_type: ModificationType::ToolInstall,
-            description: description.to_string(),
+            description: format!("[{}] {}", tool_name, description),
             file_path: None,
             diff: None,
+            diff_truncated: false,
             reversible: true,
         };
 
         info!("Audit: tool install '{}'", tool_name);
-        let db = self.db.lock().await;
-        db.log_modification(&entry)
+        self.persist(entry).await
     }
 
     /// Record a config update.
     pub async fn log_config_update(&self, description: &str, diff: &str) -> Result<()> {
+        let (truncated_diff, was_truncated) = truncate_diff(diff.to_string());
         let entry = ModificationEntry {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
             mod_type: ModificationType::ConfigUpdate,
             description: description.to_string(),
             file_path: Some("automaton.toml".to_string()),
-            diff: Some(diff.to_string()),
+            diff: Some(truncated_diff),
+            diff_truncated: was_truncated,
             reversible: true,
         };
 
         info!("Audit: config update");
-        let db = self.db.lock().await;
-        db.log_modification(&entry)
+        self.persist(entry).await
     }
 
     /// Record a skill addition.
@@ -86,12 +103,12 @@ impl AuditLog {
             description: format!("Added skill: {}", skill_name),
             file_path: Some(file_path.to_string()),
             diff: None,
+            diff_truncated: false,
             reversible: true,
         };
 
         info!("Audit: skill add '{}'", skill_name);
-        let db = self.db.lock().await;
-        db.log_modification(&entry)
+        self.persist(entry).await
     }
 
     /// Record a heartbeat config update.
@@ -103,12 +120,12 @@ impl AuditLog {
             description: description.to_string(),
             file_path: Some("heartbeat.yml".to_string()),
             diff: None,
+            diff_truncated: false,
             reversible: true,
         };
 
         info!("Audit: heartbeat update");
-        let db = self.db.lock().await;
-        db.log_modification(&entry)
+        self.persist(entry).await
     }
 
     /// Record an upstream code pull.
@@ -118,18 +135,56 @@ impl AuditLog {
         description: &str,
         diff: &str,
     ) -> Result<()> {
+        let (truncated_diff, was_truncated) = truncate_diff(diff.to_string());
         let entry = ModificationEntry {
             id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
             mod_type: ModificationType::Upstream,
             description: format!("Upstream pull {}: {}", commit_hash, description),
             file_path: None,
-            diff: Some(diff.to_string()),
+            diff: Some(truncated_diff),
+            diff_truncated: was_truncated,
             reversible: false,
         };
 
         info!("Audit: upstream pull {}", commit_hash);
-        let db = self.db.lock().await;
-        db.log_modification(&entry)
+        self.persist(entry).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_audit_log_concurrent_writes() {
+        let db = Database::open_memory().unwrap();
+        let db = Arc::new(Mutex::new(db));
+        let audit = Arc::new(AuditLog::new(db.clone()));
+
+        let mut handles = Vec::new();
+        for i in 0..20 {
+            let audit = audit.clone();
+            handles.push(tokio::spawn(async move {
+                audit
+                    .log_code_edit(
+                        &format!("edit {}", i),
+                        &format!("workspace/file_{}.rs", i),
+                        &format!("-old line {}\n+new line {}", i, i),
+                    )
+                    .await
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        // Verify all 20 entries were persisted
+        let db_lock = db.lock().await;
+        let count: u64 = db_lock
+            .count_modifications()
+            .expect("should count modifications");
+        assert_eq!(count, 20);
     }
 }

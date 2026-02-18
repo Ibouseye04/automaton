@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Background heartbeat daemon.
@@ -39,19 +40,33 @@ impl HeartbeatDaemon {
     }
 
     /// Run the heartbeat loop (call from a tokio::spawn).
-    pub async fn run(&mut self) -> Result<()> {
+    ///
+    /// The loop exits cooperatively when `cancel` is triggered.
+    pub async fn run(&mut self, cancel: CancellationToken) -> Result<()> {
         info!("Heartbeat daemon started");
 
         let tick_interval = tokio::time::Duration::from_secs(60);
 
         loop {
-            tokio::time::sleep(tick_interval).await;
-            self.tick().await;
+            tokio::select! {
+                _ = tokio::time::sleep(tick_interval) => {
+                    if let Err(e) = self.tick().await {
+                        error!("Heartbeat tick failed: {e}");
+                    }
+                }
+                _ = cancel.cancelled() => {
+                    info!("Heartbeat daemon shutting down");
+                    return Ok(());
+                }
+            }
         }
     }
 
     /// Process one tick — check each entry and run if due.
-    async fn tick(&mut self) {
+    ///
+    /// Individual task failures are logged and do not stop other tasks.
+    /// Infrastructure errors (e.g. DB write failure) are propagated.
+    async fn tick(&mut self) -> Result<()> {
         let now = Utc::now();
 
         for entry in &self.entries {
@@ -93,12 +108,11 @@ impl HeartbeatDaemon {
                         Err(e) => (format!("Error: {}", e), false),
                     };
 
-                    // Log to database
+                    // Log to database (propagate DB errors)
                     {
                         let db = self.db.lock().await;
-                        if let Err(e) = db.log_heartbeat(&entry.name, &result_str, success) {
-                            error!("Failed to log heartbeat: {}", e);
-                        }
+                        db.log_heartbeat(&entry.name, &result_str, success)
+                            .context("Failed to log heartbeat to database")?;
                     }
 
                     self.last_run.insert(entry.name.clone(), now);
@@ -109,6 +123,8 @@ impl HeartbeatDaemon {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
